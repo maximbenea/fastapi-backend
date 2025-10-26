@@ -224,3 +224,64 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mostly for development debugging, will not be used in actual app
+@app.get("/processing")
+async def get_processing_state():
+    return {
+        "processing": active_workers > 0,
+        "active_workers": active_workers,
+        "max_workers": MAX_WORKERS,
+        "queue_size": processing_queue.qsize()
+    }
+
+@app.get("/cache_stats")
+async def get_cache_stats():
+    return {
+        "cache_size": len(scent_cache),
+        "max_cache_size": CACHE_MAX_SIZE,
+        "cache_ttl": CACHE_TTL
+    }
+
+@app.post("/test-broadcast")
+async def test_broadcast():
+    """Test endpoint to manually trigger a broadcast to all clients"""
+    test_message = json.dumps({"message": "test_scent"})
+    await manager.broadcast_to_esp8266(test_message)
+    await manager.broadcast_to_web(test_message)
+    return {
+        "status": "broadcast_sent",
+        "message": test_message,
+        "esp8266_connections": len(manager.esp8266_connections),
+        "web_connections": len(manager.active_connections)
+    }
+
+# Actual used API endpoints
+@app.post("/upload-frame")
+async def upload_image(image: Image):
+    # Add to processing queue
+    processing_queue.put(image.image_base64)
+    return {
+        "status": "queued",
+        "queue_position": processing_queue.qsize(),
+        "active_workers": active_workers
+    }
+
+@app.websocket("/ws/web")
+async def websocket_web_endpoint(websocket: WebSocket):
+    await manager.connect(websocket, "web")
+    try:
+        while True:
+            # Keep connection alive
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, "web")
+
+@app.websocket("/ws/esp8266")
+async def websocket_esp8266_endpoint(websocket: WebSocket):
+    await manager.connect(websocket, "esp8266")
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, "esp8266")
+
