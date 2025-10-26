@@ -134,7 +134,93 @@ def cache_results(image_hash, result):
 
     scent_cache[image_hash] = (result, time.time())
 
+# Core logic
+def process_image_worker(image_base64):
+    """Worker function that processes a single image"""
+    global current_scent_result, active_workers
 
+    try:
+        # First check the cache
+        image_hash = get_image_hash(image_base64)
+        cached_result = get_cached_result(image_hash)
 
+        if cached_result:
+            print(f"cache hit for {image_hash[:8]}")
+            current_scent_result = cached_result
+        else:
+            print(f"cache miss for {image_hash[:8]}, processing image")
+            # ! Could arise conflict between workers, because they use the same path
+            file_path = "image.jpg"
 
+            # Create the image for the gemini api
+            with open(file_path, "wb") as f:
+                f.write(base64.b64decode(image_base64))
+
+            result = gemini_request()
+            cache_results(image_hash, result)
+            current_scent_result = result
+            print(f"gemini result: {result}")
+
+            os.remove(file_path)
+
+        # Queue the message for the main loop to handle, so that the workers don't interact with asyncio function
+        if current_scent_result:
+            clean_result = current_scent_result.strip('"').strip("'")
+            # Serialize the cleaned python object into a JSON string
+            message = json.dumps({"message": clean_result})
+            broadcast_queue.put(message)
+            print(f"queued broadcast message: {message}")
+
+    except Exception as e:
+        print(f"error processing image: {e}")
+    finally:
+        active_workers -= 1
+
+# Background loop
+async def processing_loop():
+    global active_workers
+
+    while True:
+        if not processing_queue.empty() and MAX_WORKERS > active_workers:
+            image_base64 = processing_queue.get()
+            active_workers += 1
+
+            # Submit to the thread pool
+            executor.submit(process_image_worker, image_base64)
+            print(f"processing image, active workers: {active_workers}")
+
+        if not broadcast_queue.empty():
+            message = broadcast_queue.get()
+            print(f"processing broadcast message: {message}")
+
+            await manager.broadcast_to_esp8266(message)
+            await manager.broadcast_to_web(message)
+
+        # A very important pause for HTTP requests
+        await asyncio.sleep(0.1)
+
+# Manage startup and shutdown events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start background loop
+    task = asyncio.create_task(processing_loop())
+    yield
+    # Stop loop on shutdown
+    task.cancel()
+
+    # Handling clean shutdown
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],    # Should be later changed to actual fronted origin
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
