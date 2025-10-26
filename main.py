@@ -4,6 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import base64, os, asyncio, hashlib, time, queue, json
 from contextlib import asynccontextmanager
+
+from tenacity import retry_unless_exception_type
+
 from gemini_api import gemini_request
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
@@ -101,6 +104,35 @@ class ConnectionManager:
 
 manager = ConnectionManager()   # Finished with websocket implementation
 
+# Caching functions
+def get_image_hash(image_base64):
+    """ Creates a hash from the base64 encoded image, used in further caching"""
+    # Since the MD5 operates only on binary data the base64 image will go through following steps:
+    # Base64 -> Binary -> Binary Hash -> Hexadecimal Hash
+    return hashlib.md5(image_base64).hexdigest()
+
+def get_cached_result(image_hash):
+    """Verify whether the image has already been cached in memory"""
+    if image_hash in scent_cache:
+        # Key-value representation where the value is an array of 2 elements
+        result, timestamp = scent_cache[image_hash]
+        # Check the data 'freshness'
+        if time.time() - timestamp < CACHE_TTL:
+            return result
+        else:
+            # Remove expired entry
+            del scent_cache[image_hash]
+    return None
+
+def cache_results(image_hash, result):
+    """Cache the result"""
+    if len(scent_cache) > CACHE_MAX_SIZE:
+        # Find the key in the cache that has the smallest timestamp
+        # Using the lambda comparator for the min function, it looks at all timestamps for each key
+        oldest_key = min(scent_cache.keys(), key=lambda k: scent_cache[k][1])
+        del scent_cache[oldest_key]
+
+    scent_cache[image_hash] = (result, time.time())
 
 
 
