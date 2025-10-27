@@ -5,10 +5,8 @@ from pydantic import BaseModel
 import base64, os, asyncio, hashlib, time, queue, json
 from contextlib import asynccontextmanager
 
-from tenacity import retry_unless_exception_type
 
 from gemini_api import gemini_request
-from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 import threading
 from typing import List
@@ -109,7 +107,7 @@ def get_image_hash(image_base64):
     """ Creates a hash from the base64 encoded image, used in further caching"""
     # Since the MD5 operates only on binary data the base64 image will go through following steps:
     # Base64 -> Binary -> Binary Hash -> Hexadecimal Hash
-    return hashlib.md5(image_base64).hexdigest()
+    return hashlib.md5(image_base64.encode()).hexdigest()
 
 def get_cached_result(image_hash):
     """Verify whether the image has already been cached in memory"""
@@ -154,7 +152,7 @@ def process_image_worker(image_base64):
 
             # Create the image for the gemini api
             with open(file_path, "wb") as f:
-                f.write(base64.b64decode(image_base64))
+                f.write(base64.b64decode(image_base64[23:]))
 
             result = gemini_request()
             cache_results(image_hash, result)
