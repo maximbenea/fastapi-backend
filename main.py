@@ -5,8 +5,8 @@ from pydantic import BaseModel
 import base64, os, asyncio, hashlib, time, queue, json
 from contextlib import asynccontextmanager
 
-
 from gemini_api import gemini_request
+from groq_api import groq_request
 from concurrent.futures import ThreadPoolExecutor
 import threading
 from typing import List
@@ -154,7 +154,7 @@ def process_image_worker(image_base64):
             with open(file_path, "wb") as f:
                 f.write(base64.b64decode(image_base64[23:]))
 
-            result = gemini_request()
+            result = groq_request()
             cache_results(image_hash, result)
             current_scent_result = result
             print(f"gemini result: {result}")
@@ -164,7 +164,7 @@ def process_image_worker(image_base64):
         # Queue the message for the main loop to handle, so that the workers don't interact with asyncio function
         if current_scent_result:
             clean_result = current_scent_result.strip('"').strip("'")
-            # Serialize the cleaned python object into a JSON string
+            # Serialize the cleaned python string into a JSON string
             message = json.dumps({"message": clean_result})
             broadcast_queue.put(message)
             print(f"queued broadcast message: {message}")
